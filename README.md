@@ -20,26 +20,62 @@ WAXAL's languages and Zindi's submission format.
 This machine has **no GPU and 3.8GB RAM** — not enough to load even a
 1B-parameter ASR model comfortably, let alone fine-tune one. So:
 
-- **Local (this repo):** eval harness, project scaffolding, notes.
-- **Colab (`notebooks/`):** everything that needs a GPU — data download, model
-  inference/training, submission generation.
-- **Zindi auth** (username + password) happens *inside* the Colab notebook via
-  a masked `getpass()` prompt. It never passes through this chat or any tool
-  call — that's intentional, not an oversight. The `zindi` pip package
-  (`pip install zindi`, `from zindi.user import Zindian`) needs a
-  username/password login, not a bare API token, despite how "API token" is
-  sometimes used informally on Zindi's docs.
+- **Local (this repo):** eval harness, CSV/text-only data exploration
+  (`notebooks/00_data_exploration.py` — no audio, no GPU needed), scaffolding.
+- **Colab (`notebooks/01_...ipynb`):** everything that needs a GPU or audio —
+  loading WaxalNLP audio, model inference, submission generation.
+- **Zindi**: the community `zindi` pip package needs interactive
+  username/password login, not a real token/API — Zindi doesn't currently
+  expose a public developer API. Given that, submission is a deliberate
+  **manual step**: the notebook downloads `submission.csv` to your machine
+  and you upload it by hand on the Zindi Submissions tab. No third-party
+  package touches your Zindi credentials anywhere in this pipeline.
+- **Hugging Face**: `google/WaxalNLP` isn't gated, but the dataset card
+  recommends logging in (`huggingface_hub.login()`) — that prompt runs
+  inside Colab too, same reasoning.
 
-## Data
+## Data — verified against the actual downloaded files
 
-Zindi's `Train.csv` / `Test.csv` / `SampleSubmission.csv` are (presumed, pending
-your download) manifests over the HF dataset — matched to actual audio by `id`.
-The notebook prints the real columns and validates the id match before doing
-anything else; don't assume the schema below is exact until that cell runs.
+Files come from the Zindi "Data" tab (`Train.csv`, `Test.csv`,
+`SampleSubmission.csv`, `Test_phase2.csv`, `Waxal_Challenge_Starter_Code.ipynb`),
+placed in `data/` (gitignored — not committed, per Zindi's code-sharing rules
+and to keep the repo light).
 
-**`google/WaxalNLP` schema** (confirmed via the HF dataset card), one config
-per language (`lin_asr`, `lug_asr`, `sna_asr`), splits `train`/`validation`/
-`test`/`unlabeled`:
+**`Train.csv`** — 38,199 rows, columns `id, transcription, language, original_split`.
+This is the HF `train`+`validation` splits merged (`original_split` is only
+ever `train` or `validation`) — text only, no audio.
+| language | rows | train | validation |
+|---|---|---|---|
+| `lin` (Lingala) | 16,244 | 14,400 | 1,844 |
+| `sna` (Shona) | 15,836 | 14,109 | 1,727 |
+| `lug` (Luganda) | 6,119 | 5,455 | 664 |
+
+Luganda has under half the training rows of the other two — matches the
+WAXAL paper's transcribed-hours numbers below.
+
+**Parser quirk:** 23 rows contain literal backslash-escaped quotes inside
+the transcription (people quoting book/film titles, e.g. `"L'oeil sur la
+nature"`). Default `pd.read_csv` throws `Expected 4 fields, saw 5` on line
+9570. Fix: `pd.read_csv(..., engine="python", escapechar="\\")`. Both
+`notebooks/00_data_exploration.py` and `01_zeroshot_mms_baseline.ipynb` do
+this already.
+
+**`Test.csv`** — 4,253 rows, **one column, `ID`** — no language column.
+Language is recovered from the id prefix (`lin_9470` → `lin`); verified
+against `Train.csv` that id-prefix always equals the language column, so
+this is safe. 0 overlap with `Train.csv` ids. Distribution: `lin` 1,866,
+`sna` 1,749, `lug` 638.
+
+**`SampleSubmission.csv`** — columns `ID, Target`; ids in exactly the same
+order as `Test.csv`; `Target` is the placeholder string `"XXX"`.
+
+**`Test_phase2.csv`** — 1,500 rows, columns `ID, Target`, ids like
+`ID_TBDTM` — anonymized, no language-revealing prefix (matches the rules:
+Phase 2 gives audio only, no metadata). Nothing to do with this yet — Phase 2
+audio isn't released until ~1 week before close.
+
+**`google/WaxalNLP` schema** (HF dataset card), one config per language
+(`lin_asr`, `lug_asr`, `sna_asr`), splits `train`/`validation`/`test`/`unlabeled`:
 ```python
 {
   'id': 'sna_0',
@@ -50,19 +86,28 @@ per language (`lin_asr`, `lug_asr`, `sna_asr`), splits `train`/`validation`/
   'gender': 'Female',
 }
 ```
+`Train.csv`/`Test.csv` ids join directly against this `id` field.
+
+**Orthography / code-switching, read off the actual transcriptions:**
+- **Lingala** carries real French code-switching and French loanwords/diacritics
+  (`é è î ô â à ê ï ç` — e.g. *"on dirait"*, *"carburant"*, *"farine"*). A
+  model with some French exposure may help here.
+- **Luganda** uses `ŋ`/`Ŋ` (eng) as a real letter (466 occurrences) plus
+  apostrophes for elision (`g'ennyanja`) — standard orthography, not noise.
+- **Shona** shows inconsistent tone/vowel marking (`í ú à ñ ó á é ò`) across
+  transcribers — expect some orthographic variance even within-language.
+- One near-empty row: `lin_9193` transcription is literally `"\n"` — a data
+  artifact, not evidence of others like it (only 1 found).
 
 **From the WAXAL paper** (arXiv:2602.02734 — a data-descriptor paper, no
 baselines/models/splits reported):
-- Transcribed hours: **Lingala 101.5h, Shona 99.2h, Luganda 46.0h** — Luganda
-  is the lowest-resource of the three and likely the hardest to model.
+- Transcribed hours: **Lingala 101.5h, Shona 99.2h, Luganda 46.0h**.
 - Speech is **unscripted, image-prompted** description (not read scripts) —
   expect natural disfluency, off-topic drift, background noise.
 - Only **10% of collected audio was transcribed**, by paid local linguists,
-  in local script where one exists, else transliterated to Latin script —
-  expect orthographic inconsistency, especially for Luganda tone/vowel length
-  marking.
+  in local script where one exists, else transliterated to Latin script.
 - No documented train/test split methodology (e.g. speaker-disjoint) — treat
-  with caution when judging local validation scores vs. leaderboard.
+  local validation scores as directional, not a leaderboard guarantee.
 
 ## First submission: zero-shot MMS baseline
 
@@ -74,35 +119,43 @@ board fast, then iterate.
 
 **Run it:**
 1. Open in Colab, set runtime to GPU (T4 is enough).
-2. Run cells top to bottom. You'll be prompted for your Zindi username/password
-   (masked) to download `Train.csv`/`Test.csv`/`SampleSubmission.csv` and the
-   official starter notebook.
-3. Check the printed column names / id-match counts in cells 3–4 — if `0`
-   ids match, the id format differs from raw WaxalNLP ids and the matching
-   logic needs a tweak (e.g. stripped prefix) before continuing.
-4. Review the sanity-check WER/CER printed against `Train.csv` ground truth.
-5. `submission_mms_zeroshot.csv` is written to `./dataset/`. Inspect it.
-6. Flip `DO_SUBMIT = True` in the last cell to submit via the `zindi` package
-   (uses one of your 5 daily / 200 total submissions) — or just download the
-   CSV and upload it by hand on the Zindi submission page.
+2. Run cells top to bottom. Upload `Train.csv`, `Test.csv`,
+   `SampleSubmission.csv` when prompted (from your local `data/` folder).
+3. It loads only the WaxalNLP **test**-split audio (~1.3GB across all 3
+   languages) to build predictions, and streams a small train+validation
+   slice (no full ~10GB download) for a WER/CER sanity check.
+4. Review the sanity-check numbers, then check `submission_mms_zeroshot.csv`
+   once it auto-downloads.
+5. Upload it by hand on Zindi's Submissions tab (costs one of your 5
+   daily / 200 total submissions).
 
 ## Next steps after the baseline lands
 
-- Fine-tune (Whisper-small or MMS adapters) on the WAXAL train split proper —
-  zero-shot MMS is a floor, not a ceiling.
-- Weight training toward Luganda given its smaller transcribed pool.
-- Consider the `unlabeled` split per language for semi-supervised / self-training,
-  same pattern as the `afrivoices-asr-hack` project's later rounds.
-- Watch generalization, not just Phase-1 leaderboard score — Phase 2's unseen
-  set with no language metadata is what actually determines prizes.
+- **Second part**: fine-tune. Google's own starter notebook
+  (`data/Waxal_Challenge_Starter_Code.ipynb`) LoRA-fine-tunes
+  `google/gemma-3n-E2B-it` (gated model, needs HF license acceptance) per
+  language via PEFT + TRL SFTTrainer — one language at a time, A100
+  recommended (T4 works with small batches + gradient checkpointing). It
+  trains and evaluates WER/CER on the HF test split, but does **not**
+  generate a `Test.csv`-shaped submission — that join-by-id step from
+  `01_zeroshot_mms_baseline.ipynb` still needs to be reused on top of it.
+- Alternative: fine-tune MMS's CTC adapters or Whisper-small on the WAXAL
+  train split, following the multilingual fine-tuning pattern from
+  `afrivoices-asr-hack` (temperature-sampled language balance, since Luganda
+  is ~2.6x smaller than the other two here as well).
+- Weight training/augmentation toward Luganda given its smaller pool.
+- Consider the `unlabeled` split per language for semi-supervised / self-training.
+- Watch generalization, not just the Phase-1 score — Phase 2's unseen set
+  with no language metadata is what actually determines prizes.
 
 ## Repo structure
 
 ```
 eval/
-  compute_wer.py     WER/CER + leaderboard-weighted score harness (jiwer-based)
+  compute_wer.py            WER/CER + leaderboard-weighted score harness (jiwer-based)
 notebooks/
-  01_zeroshot_mms_baseline.ipynb   Colab: data download, zero-shot MMS, submission.csv
-data/                 (gitignored) Zindi CSVs land here via the notebook
-submissions/           (gitignored) generated submission CSVs
+  00_data_exploration.py    Local, no-GPU pandas EDA on the CSVs (schema, quirks, stats)
+  01_zeroshot_mms_baseline.ipynb   Colab: WaxalNLP audio, zero-shot MMS, submission.csv
+data/                        (gitignored) Zindi CSVs + starter notebook live here
+submissions/                 (gitignored) generated submission CSVs
 ```
