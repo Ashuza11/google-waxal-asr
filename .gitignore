@@ -1,0 +1,14 @@
+data/
+submissions/
+*.csv
+!SampleSubmission.csv.example
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.env
+*.pkl
+*.pt
+*.bin
+checkpoints/
+outputs/
+.DS_Store

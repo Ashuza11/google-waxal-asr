@@ -1,0 +1,5 @@
+# Local, lightweight deps only (repo inspection + eval harness).
+# Heavy ML deps (torch, transformers, datasets[audio]) are installed inside
+# the Colab notebook itself — this machine has no GPU and 3.8GB RAM.
+pandas>=2.0
+jiwer>=3.0
