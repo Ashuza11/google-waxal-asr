@@ -1,5 +1,7 @@
 # Google WAXAL ASR Challenge
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Ashuza11/google-waxal-asr/blob/main/notebooks/01_zeroshot_mms_baseline.ipynb)
+
 Multilingual ASR for **Lingala (`lin`)**, **Shona (`sna`)**, and **Luganda (`lug`)**,
 built on the [WAXAL dataset](https://huggingface.co/datasets/google/WaxalNLP)
 (Google Research + Makerere University, University of Ghana, Digital Umuganda).
@@ -71,8 +73,16 @@ order as `Test.csv`; `Target` is the placeholder string `"XXX"`.
 
 **`Test_phase2.csv`** — 1,500 rows, columns `ID, Target`, ids like
 `ID_TBDTM` — anonymized, no language-revealing prefix (matches the rules:
-Phase 2 gives audio only, no metadata). Nothing to do with this yet — Phase 2
-audio isn't released until ~1 week before close.
+Phase 2 gives audio only, no metadata). Phase 2 audio itself isn't released
+until ~1 week before close, **but the submission validator already requires
+predictions for these 1,500 ids too** — found the hard way, from a real
+failed submission: `Wer error: Missing entries for IDs ID_TBDTM, ID_JZFXM,
+...`. `SampleSubmission.csv` only lists the 4,253 Phase 1 ids, which is
+misleading; the validator actually checks against the combined Phase 1 +
+Phase 2 set (5,753 ids). `01_zeroshot_mms_baseline.ipynb` handles this by
+filling all 1,500 Phase 2 rows with a `"."` placeholder (unscorable until
+Phase 2 opens, but passes the format check) and concatenating them onto the
+4,253 real Phase 1 predictions.
 
 **`google/WaxalNLP` schema** (HF dataset card), one config per language
 (`lin_asr`, `lug_asr`, `sna_asr`), splits `train`/`validation`/`test`/`unlabeled`:
