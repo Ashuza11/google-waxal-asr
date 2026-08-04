@@ -48,6 +48,7 @@ image = (
         "zlib1g-dev",
         "libbz2-dev",
         "liblzma-dev",
+        "wget",
     )
     # KenLM ships no PyPI wheel with the lmplz/build_binary CLI tools, so build
     # them from source once here; train_mms_adapters.py shells out to them to
