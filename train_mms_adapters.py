@@ -26,6 +26,7 @@ import random
 import re
 import shutil
 import subprocess
+import tempfile
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,12 @@ def build_language_model(texts: list[str], destination: Path, ngram: int) -> Pat
     Requires the `lmplz`/`build_binary` command-line tools on PATH (built into
     the Modal training image). Returns None on any failure so callers fall
     back to greedy decoding instead of breaking the pipeline.
+
+    Builds in a local temp directory rather than `destination` directly:
+    `build_binary` memory-maps its output and calls msync() to flush it, which
+    fails on network/FUSE-backed mounts like Modal Volumes (`destination` is
+    typically one). Only the finished, static .bin file is copied over with a
+    plain file copy, which network filesystems handle fine.
     """
     if shutil.which("lmplz") is None or shutil.which("build_binary") is None:
         print("kenlm tools not found on PATH; skipping LM build, will decode greedily")
@@ -115,26 +122,27 @@ def build_language_model(texts: list[str], destination: Path, ngram: int) -> Pat
     corpus = "\n".join(t for t in (normalise(x) for x in texts) if t)
     if not corpus:
         return None
-    corpus_path = destination / "lm_corpus.txt"
-    arpa_path = destination / f"{ngram}gram.arpa"
-    binary_path = destination / f"{ngram}gram.bin"
-    corpus_path.write_text(corpus, encoding="utf-8")
-    try:
-        with corpus_path.open("rb") as source, arpa_path.open("wb") as sink:
-            subprocess.run(
-                ["lmplz", "-o", str(ngram), "--discount_fallback", "-S", "20%"],
-                stdin=source,
-                stdout=sink,
-                check=True,
-            )
-        subprocess.run(["build_binary", str(arpa_path), str(binary_path)], check=True)
-    except subprocess.CalledProcessError as error:
-        print(f"kenlm build failed ({error}); skipping LM, will decode greedily")
-        return None
-    finally:
-        corpus_path.unlink(missing_ok=True)
-        arpa_path.unlink(missing_ok=True)
-    return binary_path
+    with tempfile.TemporaryDirectory(prefix="kenlm_build_") as tmp:
+        tmp_dir = Path(tmp)
+        corpus_path = tmp_dir / "lm_corpus.txt"
+        arpa_path = tmp_dir / f"{ngram}gram.arpa"
+        binary_path = tmp_dir / f"{ngram}gram.bin"
+        corpus_path.write_text(corpus, encoding="utf-8")
+        try:
+            with corpus_path.open("rb") as source, arpa_path.open("wb") as sink:
+                subprocess.run(
+                    ["lmplz", "-o", str(ngram), "--discount_fallback", "-S", "20%"],
+                    stdin=source,
+                    stdout=sink,
+                    check=True,
+                )
+            subprocess.run(["build_binary", str(arpa_path), str(binary_path)], check=True)
+        except subprocess.CalledProcessError as error:
+            print(f"kenlm build failed ({error}); skipping LM, will decode greedily")
+            return None
+        final_path = destination / f"{ngram}gram.bin"
+        shutil.copy(binary_path, final_path)
+    return final_path
 
 
 def build_processor_with_lm(processor: Any, lm_binary_path: Path) -> Wav2Vec2ProcessorWithLM:
