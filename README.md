@@ -139,7 +139,64 @@ board fast, then iterate.
 5. Upload it by hand on Zindi's Submissions tab (costs one of your 5
    daily / 200 total submissions).
 
+## Phase 2 correction (2 August 2026)
+
+The organisers announced that the first Phase 2 release was incorrect and
+replaced it. **Do not use the earlier Phase 2 audio.** Download the corrected
+Phase 2 CSV/audio from Zindi before generating any further submission. The
+copy currently in this repository's ignored `data/` directory predates that
+announcement and is not treated as authoritative.
+
+`train_mms_adapters.py` is the first trainable pipeline. It fine-tunes the
+language-specific CTC adapter/head from `facebook/mms-1b-all` on each WAXAL
+language, selects checkpoints using validation `0.5*WER + 0.5*CER`, identifies
+the language of anonymous Phase 2 audio with `facebook/mms-lid-126`, and
+generates predictions with the matching ASR adapter. It intentionally requires
+the corrected Phase 2 audio directory rather than emitting placeholder text.
+
+Two data/decoding improvements are on by default, following
+[WAXAL-NET](https://arxiv.org/abs/2606.02375) (fine-tuning ablations on this
+same corpus) and the standard HF wav2vec2/MMS n-gram recipe:
+- **Audio filtering** — clips shorter than 1.5s or faster than 4 words/sec are
+  dropped before training (`--min-audio-seconds`/`--max-words-per-second`,
+  `<=0` disables). WAXAL-NET's own ablation found this alone cut Lingala WER
+  from 113.5% to 49.0%.
+- **KenLM beam-search rescoring** — a per-language n-gram model is built from
+  the training transcriptions and used for CTC beam search at inference
+  instead of greedy argmax decoding (`--build-lm`/`--no-lm`, `--lm-ngram`,
+  predict's `--beam-width`). Best-effort: if the `lmplz`/`build_binary` tools
+  aren't available, training logs a warning and inference falls back to
+  greedy decoding automatically — nothing breaks.
+
+The recommended execution environment is Modal. It keeps checkpoints in a
+persistent Volume, builds the KenLM CLI tools into the training image, and
+runs training on an A100 80GB:
+
+```bash
+pip install modal
+modal setup
+modal volume create waxal-data
+modal volume create waxal-models
+modal volume put waxal-data data/Test.csv /Test.csv
+modal volume put waxal-data data/Test_Phase2.csv /Test_Phase2.csv
+modal run modal_app.py --action fetch-phase2
+
+modal run modal_app.py --action train
+modal run modal_app.py --action predict
+modal volume get waxal-models \
+  mms_adapters/submission_mms_adapters.csv submissions/
+```
+
+The three language jobs run **concurrently** by default (each writes to its
+own Volume subdirectory, so parallel commits don't collide) — trades GPU spend
+(up to 3 A100s at once) for wall-clock time. Pass `--sequential` to go back to
+one job at a time if you'd rather control spend than save time. You can also
+train a single language using `--languages lug`, for example. No leaderboard
+position can be guaranteed: retain the two strongest validation/leaderboard
+submissions for private evaluation.
+
 ## Next steps after the baseline lands
+
 
 - **Second part**: fine-tune. Google's own starter notebook
   (`data/Waxal_Challenge_Starter_Code.ipynb`) LoRA-fine-tunes

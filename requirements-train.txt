@@ -1,0 +1,16 @@
+# GPU training environment (Colab/Kaggle recommended).
+torch>=2.4
+transformers>=4.46,<5
+datasets[audio]>=2.20
+accelerate>=0.34
+jiwer>=3.0
+pandas>=2.0
+librosa>=0.10
+soundfile>=0.12
+# CTC beam-search rescoring (train_mms_adapters.py --build-lm, on by default).
+# Needs the lmplz/build_binary CLI tools on PATH too — see modal_app.py's
+# image definition for the from-source build; not required outside Modal
+# unless you build kenlm yourself (falls back to greedy decoding otherwise).
+pyctcdecode>=0.5
+https://github.com/kpu/kenlm/archive/master.zip
+

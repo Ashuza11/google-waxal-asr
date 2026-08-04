@@ -12,3 +12,5 @@ __pycache__/
 checkpoints/
 outputs/
 .DS_Store
+env/
+.claude/settings.local.json
